@@ -29,12 +29,6 @@
     grip: 1.6,         // how fast sideways sliding is converted while turning
     staminaDrain: 0.4,
     staminaRegen: 0.22,
-    minReach: 24,
-    maxReach: 74,
-    bladeMaxSpeed: 1450,
-    bladeAccel: 40000,
-    bladeK: 40,        // how hard the blade chases its target
-    stickR: 3.5,
     boardE: 0.3,
     bodyE: 0.45,
   };
@@ -43,26 +37,41 @@
     radius: 6,
     mass: 0.06,
     drag: 0.32,
-    maxSpeed: 1500,
+    maxSpeed: 1700,
     boardE: 0.72,
     netE: 0.35,
     stickE: 0.2,
     bodyE: 0.3,
   };
 
-  // Puck possession: when a slow-moving blade touches a slow puck it "picks
-  // it up" and the puck rides on the blade. A sharp deceleration of the
-  // blade (the end of a swing) releases it, so the shot goes wherever you
-  // swing. Pokes, body checks and anything that knocks it off break it.
-  H.MAGNET = {
-    range: 10,           // extra pickup distance beyond touching
-    relSpeedMax: 380,    // puck must be this slow relative to the blade to pick it up
-    cooldown: 0.25,      // no re-pickup for this long after a release
-    releaseSpeed: 450,   // blade must be moving at least this fast...
-    releaseDecel: 3000,  // ...and slowing down at least this hard to release
-    follow: 45,          // how tightly the puck tracks its spot on the blade
-    breakDist: 14,       // knocked this far off its spot -> loose puck
-    pokeSpeed: 120,      // opponent stick hitting the puck this hard knocks it loose
+  // Stick. The blade points toward where you aim, at a fixed short reach.
+  H.STICK = {
+    reach: 33,        // blade tip distance from the skater's center
+    r: 3.5,           // shaft thickness (collision radius)
+    turnRate: 16,     // how fast the stick turns toward your aim (rad/s)
+    swingReach: 42,   // the stick extends a little during a swing
+    swingArc: 1.25,   // swing sweeps from +arc to -arc around the aim (rad)
+    swingDur: 0.2,
+    swingCd: 0.9,     // cooldown between swings
+    pickupSpeed: 900, // a loose puck slower than this (relative) sticks to your blade
+  };
+
+  // Charged shot: hold to fill the bar, release to shoot.
+  H.SHOT = {
+    min: 450,
+    max: 1600,
+    chargeTime: 1.0,     // seconds to full power
+    chargeSpeedMul: 0.8, // skate a bit slower while winding up
+  };
+
+  H.GOALIE = {
+    offset: 16,     // how far out from the goal line the goalie stands
+    halfLen: 8,     // pads: a capsule spanning +/- halfLen along the goal line
+    radius: 10,
+    speed: 240,
+    accel: 4000,
+    reaction: 0.14,
+    e: 0.25,        // rebound bounciness
   };
 
   H.PHYS = {
@@ -71,8 +80,9 @@
   };
 
   H.DIFFICULTY = {
-    easy:   { speedMul: 0.82, reaction: 0.28, aimErr: 30, shootRange: 300, aggression: 0.45, shotPower: 0.72 },
-    normal: { speedMul: 0.93, reaction: 0.14, aimErr: 16, shootRange: 360, aggression: 0.75, shotPower: 0.88 },
-    hard:   { speedMul: 1.0,  reaction: 0.06, aimErr: 6,  shootRange: 420, aggression: 1.0,  shotPower: 1.0 },
+    // charge: [min, max] seconds the bot winds up a shot
+    easy:   { speedMul: 0.82, reaction: 0.28, aimErr: 22, shootRange: 300, aggression: 0.35, charge: [0.25, 0.5] },
+    normal: { speedMul: 0.93, reaction: 0.14, aimErr: 12, shootRange: 360, aggression: 0.6,  charge: [0.45, 0.8] },
+    hard:   { speedMul: 1.0,  reaction: 0.06, aimErr: 5,  shootRange: 420, aggression: 0.9,  charge: [0.65, 1.0] },
   };
 })(window.H = window.H || {});
