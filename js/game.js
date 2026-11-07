@@ -2,14 +2,13 @@
 (function (H) {
   'use strict';
 
-  const SK = H.SKATER;
-  const PLAYER = 0, BOT = 1;
+    const PLAYER = 0, BOT = 1;
 
   const $ = function (id) { return document.getElementById(id); };
   const canvas = $('game');
   const renderer = new H.Renderer(canvas);
 
-  const settings = { difficulty: 'normal', minutes: 3, sensitivity: 1 };
+  const settings = { difficulty: 'normal', minutes: 3 };
   try {
     const saved = JSON.parse(localStorage.getItem('hockey-settings') || '{}');
     Object.assign(settings, saved);
@@ -29,20 +28,29 @@
     bot: null,
     message: '',
     shots: [0, 0],
+    saves: [0, 0],
+    steals: [0, 0],
   };
   window.__game = game; // handy for debugging in the console
 
   // ---------------- Input ----------------
+  // The stick points at the mouse cursor.
+  // Left mouse: with the puck, hold to charge a shot and release to shoot;
+  //             without it, swing your stick.
+  // Right mouse / E: swing your stick (the only way to steal the puck).
   const keys = {};
-  const mouse = { sx: 0, sy: 0, has: false };
-  const stickRel = { x: 45, y: 0 };
-  let locked = false;
+  const mouse = { sx: 0, sy: 0, has: false, left: false, swingQueued: false };
+
+  function playing() {
+    return !game.paused && (game.state === 'play' || game.state === 'countdown' || game.state === 'goal');
+  }
 
   window.addEventListener('keydown', function (e) {
     keys[e.code] = true;
-    if (e.code === 'KeyP' || (e.code === 'Escape' && !locked)) {
+    if (e.code === 'KeyP' || e.code === 'Escape') {
       if (game.state !== 'menu' && game.state !== 'over') setPaused(!game.paused);
     }
+    if (e.code === 'KeyE' && !e.repeat && playing()) mouse.swingQueued = true;
     if (e.code === 'KeyM') { const m = H.Audio.toggleMute(); flash(m ? 'Sound off' : 'Sound on'); }
     if (e.code === 'KeyR' && game.state === 'over') startGame();
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].indexOf(e.code) >= 0) e.preventDefault();
@@ -50,45 +58,24 @@
   window.addEventListener('keyup', function (e) { keys[e.code] = false; });
   window.addEventListener('blur', function () {
     for (const k in keys) keys[k] = false;
+    mouse.left = false;
     if (game.state === 'play' || game.state === 'countdown') setPaused(true);
   });
 
   window.addEventListener('mousemove', function (e) {
     mouse.sx = e.clientX; mouse.sy = e.clientY; mouse.has = true;
-    if (locked) {
-      const k = settings.sensitivity / renderer.scale;
-      stickRel.x += e.movementX * k;
-      stickRel.y += e.movementY * k;
-      const l = Math.hypot(stickRel.x, stickRel.y);
-      const max = SK.maxReach * 1.25;
-      if (l > max) { stickRel.x *= max / l; stickRel.y *= max / l; }
-    }
   });
-
-  function requestLock() {
-    if (canvas.requestPointerLock) {
-      try {
-        const p = canvas.requestPointerLock();
-        if (p && p.catch) p.catch(function () { /* fall back to absolute mouse */ });
-      } catch (e) { /* ignore */ }
-    }
-  }
-  canvas.addEventListener('mousedown', function () {
+  canvas.addEventListener('mousedown', function (e) {
     H.Audio.unlock();
-    if (!game.paused && game.state !== 'menu' && game.state !== 'over') requestLock();
+    mouse.sx = e.clientX; mouse.sy = e.clientY; mouse.has = true;
+    if (e.button === 0) mouse.left = true;
+    if (e.button === 2 && playing()) mouse.swingQueued = true;
+    e.preventDefault();
   });
-  document.addEventListener('pointerlockchange', function () {
-    const was = locked;
-    locked = document.pointerLockElement === canvas;
-    if (locked && game.world) {
-      const p = game.world.skaters[PLAYER];
-      stickRel.x = p.bladeRel.x; stickRel.y = p.bladeRel.y;
-    }
-    if (was && !locked && (game.state === 'play' || game.state === 'countdown' || game.state === 'goal')) {
-      setPaused(true);
-    }
-    $('lock-hint').classList.toggle('hidden', locked || game.state === 'menu' || game.state === 'over');
+  window.addEventListener('mouseup', function (e) {
+    if (e.button === 0) mouse.left = false;
   });
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
   function readPlayerInput(p) {
     const inp = p.input;
@@ -100,13 +87,12 @@
     inp.move.x = mx; inp.move.y = my;
     inp.sprint = !!(keys.ShiftLeft || keys.ShiftRight);
     inp.stop = !!keys.Space;
-    inp.bladeMax = 0;
-    if (!locked && mouse.has) {
-      // Without pointer lock, aim the stick at the cursor.
+    if (mouse.has) {
       const wpt = renderer.toWorld(mouse.sx, mouse.sy);
-      stickRel.x = wpt.x - p.pos.x; stickRel.y = wpt.y - p.pos.y;
+      inp.aim = { x: wpt.x - p.pos.x, y: wpt.y - p.pos.y };
     }
-    inp.stick.x = stickRel.x; inp.stick.y = stickRel.y;
+    inp.action = mouse.left;
+    if (mouse.swingQueued) { inp.swing = true; mouse.swingQueued = false; }
   }
 
   // ---------------- Game flow ----------------
@@ -120,13 +106,12 @@
   function faceoff() {
     const w = game.world;
     const p = w.skaters[PLAYER], b = w.skaters[BOT];
-    p.pos = { x: -110, y: 0 }; p.vel = { x: 0, y: 0 };
-    p.bladeRel = { x: 45, y: 0 }; p.bladeRelVel = { x: 0, y: 0 };
-    b.pos = { x: 110, y: 0 }; b.vel = { x: 0, y: 0 };
-    b.bladeRel = { x: -45, y: 0 }; b.bladeRelVel = { x: 0, y: 0 };
-    stickRel.x = 45; stickRel.y = 0;
-    p.hold = b.hold = null;
-    p.magCd = b.magCd = 0;
+    p.pos = { x: -90, y: 0 }; p.vel = { x: 0, y: 0 };
+    b.pos = { x: 90, y: 0 }; b.vel = { x: 0, y: 0 };
+    p.stickAng = 0; b.stickAng = Math.PI;
+    for (const s of [p, b]) { s.charge = -1; s.swingT = 0; s.swingCd = 0; s.pickupCd = 0; }
+    w.owner = null;
+    H.resetGoalies(w);
     w.puck.pos = { x: 0, y: 0 }; w.puck.vel = { x: 0, y: 0 };
     w.goalLock = false;
     w.lastTouch = -1;
@@ -142,24 +127,20 @@
     game.bot = H.createBot(game.world.skaters[BOT], game.world, settings.difficulty);
     game.score = [0, 0];
     game.shots = [0, 0];
+    game.saves = [0, 0];
+    game.steals = [0, 0];
     game.clock = settings.minutes * 60;
     game.overtime = false;
     game.paused = false;
     showOverlay(null);
     faceoff();
     updateHud();
-    requestLock();
   }
 
   function setPaused(v) {
     game.paused = v;
-    if (v) {
-      showOverlay('pause');
-      if (document.exitPointerLock && locked) document.exitPointerLock();
-    } else {
-      showOverlay(null);
-      requestLock();
-    }
+    mouse.left = false;
+    showOverlay(v ? 'pause' : null);
   }
 
   function endGame() {
@@ -170,9 +151,9 @@
     $('over-score').textContent = s[PLAYER] + ' – ' + s[BOT];
     $('over-detail').textContent =
       'Shots on goal: you ' + game.shots[PLAYER] + ', bot ' + game.shots[BOT] +
-      (game.overtime ? ' (decided in overtime)' : '');
+      '. Steals: you ' + game.steals[PLAYER] + ', bot ' + game.steals[BOT] + '.' +
+      (game.overtime ? ' Decided in overtime.' : '');
     showOverlay('over');
-    if (document.exitPointerLock && locked) document.exitPointerLock();
   }
 
   function onGoal(team) {
@@ -265,6 +246,12 @@
         renderer.spawnSpray(w.puck.pos.x, w.puck.pos.y, 0, 0, 5);
       }
       if (e.type === 'check' && e.strength > 300) renderer.shake = 5;
+      if (game.state === 'play') {
+        if (e.type === 'save') game.saves[e.team]++;
+        if (e.type === 'steal') game.steals[e.team]++;
+      }
+      if (e.type === 'steal' && e.team === PLAYER) flash('Stolen!');
+      if (e.type === 'steal' && e.team === BOT) flash('Puck lost!');
     }
     w.events.length = 0;
 
@@ -345,7 +332,7 @@
     renderer.draw(w, {
       labels: ['YOU', 'BOT'],
       playerIndex: PLAYER,
-      reticle: locked ? { x: p.pos.x + stickRel.x, y: p.pos.y + stickRel.y } : null,
+      cursor: mouse.has ? renderer.toWorld(mouse.sx, mouse.sy) : null,
     });
   }
 
@@ -374,7 +361,6 @@
   function showOverlay(name) {
     for (const id of ['menu', 'pause', 'over']) $(id).classList.toggle('hidden', id !== name);
     $('hud').classList.toggle('hidden', name === 'menu');
-    $('lock-hint').classList.toggle('hidden', locked || name !== null);
   }
 
   // Menu controls
@@ -392,9 +378,6 @@
   bindChoice('difficulty', 'difficulty');
   bindChoice('length', 'minutes', Number);
 
-  const sens = $('sensitivity');
-  sens.value = settings.sensitivity;
-  sens.addEventListener('input', function () { settings.sensitivity = Number(sens.value); saveSettings(); });
 
   $('start').addEventListener('click', function () { H.Audio.unlock(); startGame(); });
   $('resume').addEventListener('click', function () { H.Audio.unlock(); setPaused(false); });

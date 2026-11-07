@@ -29,11 +29,15 @@ function faceoff() {
   a.pos = { x: -120, y: 0 }; a.vel = { x: 0, y: 0 };
   b.pos = { x: 120, y: 0 }; b.vel = { x: 0, y: 0 };
   w.puck.pos = { x: 0, y: 0 }; w.puck.vel = { x: 0, y: 0 };
+  w.owner = null;
+  a.charge = b.charge = -1;
+  H.resetGoalies(w);
   w.goalLock = false;
 }
 
 const score = [0, 0];
-let shots = 0, nan = false, maxPuck = 0;
+const count = { shot: 0, save: 0, steal: 0, swing: 0 };
+let nan = false, maxPuck = 0;
 const dt = H.PHYS.step;
 let sinceGoal = 0;
 for (let t = 0; t < minutes * 60; t += dt) {
@@ -45,8 +49,8 @@ for (let t = 0; t < minutes * 60; t += dt) {
   if (!isFinite(w.puck.pos.x) || !isFinite(a.pos.x) || !isFinite(b.pos.x)) { nan = true; break; }
   for (const e of w.events) {
     if (e.type === 'goal') { score[e.team]++; faceoff(); sinceGoal = 0; }
-    if (e.type === 'stick' && e.strength > 700) shots++;
+    if (count[e.type] !== undefined) count[e.type]++;
   }
   w.events.length = 0;
 }
-console.log(JSON.stringify({ minutes, diff, oppMode, score, hardStickHits: shots, maxPuckSpeed: Math.round(maxPuck), nan }));
+console.log(JSON.stringify({ minutes, diff, oppMode, score, events: count, maxPuckSpeed: Math.round(maxPuck), nan }));

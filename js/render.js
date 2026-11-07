@@ -2,7 +2,7 @@
 (function (H) {
   'use strict';
 
-  const RINK = H.RINK, NET = H.NET, SK = H.SKATER, PK = H.PUCK;
+  const RINK = H.RINK, NET = H.NET, SK = H.SKATER, PK = H.PUCK, ST = H.STICK, GO = H.GOALIE;
 
   const TEAM_COLORS = [
     { body: '#2f6fe4', dark: '#173a7a', helmet: '#e8eef9' },
@@ -242,36 +242,54 @@
   Renderer.prototype.drawSkater = function (ctx, s, label, controlled) {
     const col = TEAM_COLORS[s.team];
     const x = s.pos.x, y = s.pos.y;
-    const bl = Math.hypot(s.bladeRel.x, s.bladeRel.y) || 1;
-    const ux = s.bladeRel.x / bl, uy = s.bladeRel.y / bl;
-    const hx = x + ux * SK.radius * 0.7, hy = y + uy * SK.radius * 0.7;
-    const tx = x + s.bladeRel.x, ty = y + s.bladeRel.y;
+    const g = H.stickGeom(s);
+    const ux = g.ux, uy = g.uy, px = -uy, py = ux;
 
     // Shadow
     ctx.fillStyle = 'rgba(0,30,60,0.18)';
     ctx.beginPath(); ctx.ellipse(x + 3, y + 4, SK.radius + 2, SK.radius, 0, 0, Math.PI * 2); ctx.fill();
 
+    // Swing trail
+    if (s.swingT > 0) {
+      const t = 1 - s.swingT / ST.swingDur;
+      const start = s.stickAng + ST.swingArc;
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = 7;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(x, y, g.reach - 2, g.ang, start, false);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(120,170,220,' + (0.5 * (1 - t)) + ')';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, y, g.reach + 3, g.ang, start, false);
+      ctx.stroke();
+    }
+
     // Stick shaft
     ctx.lineCap = 'round';
     ctx.strokeStyle = '#2b2118';
-    ctx.lineWidth = SK.stickR * 2;
-    ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(tx, ty); ctx.stroke();
-    // Blade (hook toward the left of the shaft)
-    const px = -uy, py = ux;
+    ctx.lineWidth = ST.r * 2;
+    ctx.beginPath(); ctx.moveTo(g.hx, g.hy); ctx.lineTo(g.tx, g.ty); ctx.stroke();
+    // Blade: a short hook across the end of the shaft
     ctx.strokeStyle = '#111';
-    ctx.lineWidth = SK.stickR * 2.2;
-    ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx + px * 9 - ux * 2, ty + py * 9 - uy * 2); ctx.stroke();
-    // Tape
+    ctx.lineWidth = ST.r * 2;
+    ctx.beginPath();
+    ctx.moveTo(g.tx - px * 4, g.ty - py * 4);
+    ctx.lineTo(g.tx + px * 7 + ux * 1.5, g.ty + py * 7 + uy * 1.5);
+    ctx.stroke();
     ctx.strokeStyle = '#f4f4f4';
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(tx - ux * 2, ty - uy * 2); ctx.lineTo(tx + px * 6 - ux * 2, ty + py * 6 - uy * 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(g.tx - px * 2, g.ty - py * 2);
+    ctx.lineTo(g.tx + px * 4, g.ty + py * 4);
+    ctx.stroke();
 
     // Body
     ctx.fillStyle = col.body;
     ctx.strokeStyle = col.dark;
     ctx.lineWidth = 3;
     ctx.beginPath(); ctx.arc(x, y, SK.radius, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    // Shoulders stripe
     const fa = s.facing;
     ctx.strokeStyle = 'rgba(255,255,255,0.75)';
     ctx.lineWidth = 3;
@@ -283,12 +301,86 @@
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.beginPath(); ctx.arc(x + Math.cos(fa) * 6, y + Math.sin(fa) * 6, 3, 0, Math.PI * 2); ctx.fill();
 
+    // Swing cooldown ring (only while recharging)
+    if (s.swingCd > 0 && s.swingT <= 0) {
+      const k = 1 - s.swingCd / ST.swingCd;
+      ctx.strokeStyle = 'rgba(40,50,70,0.35)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(x, y, SK.radius + 5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k);
+      ctx.stroke();
+    }
+
+    let labelY = y - SK.radius - 8;
+    // Shot charge bar
+    if (s.charge >= 0) {
+      const w = 40, hgt = 6, bx = x - w / 2, by = y - SK.radius - 16;
+      ctx.fillStyle = 'rgba(15,20,30,0.75)';
+      roundRectPath(ctx, bx - 1.5, by - 1.5, w + 3, hgt + 3, 3);
+      ctx.fill();
+      const c = s.charge;
+      const r = Math.round(80 + 175 * Math.min(1, c * 1.4));
+      const gr = Math.round(220 - 170 * Math.max(0, c - 0.4) / 0.6);
+      ctx.fillStyle = c >= 1 ? '#ff3b30' : 'rgb(' + r + ',' + gr + ',60)';
+      roundRectPath(ctx, bx, by, Math.max(2, w * c), hgt, 2);
+      ctx.fill();
+      labelY = by - 5;
+    }
+
     if (label) {
       ctx.font = 'bold 12px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = controlled ? '#173a7a' : '#7a1a16';
-      ctx.fillText(label, x, y - SK.radius - 8);
+      ctx.fillText(label, x, labelY);
     }
+  };
+
+  Renderer.prototype.drawGoalie = function (ctx, g) {
+    const col = TEAM_COLORS[g.team];
+    const x = g.pos.x, y = g.pos.y;
+    const f = -g.side; // facing out toward center
+    const L = GO.halfLen, R = GO.radius;
+
+    ctx.fillStyle = 'rgba(0,30,60,0.18)';
+    ctx.beginPath(); ctx.ellipse(x + 3, y + 4, R + 4, L + R, 0, 0, Math.PI * 2); ctx.fill();
+
+    // Pads (the save area)
+    ctx.fillStyle = '#f2f2f2';
+    ctx.strokeStyle = col.dark;
+    ctx.lineWidth = 2;
+    roundRectPath(ctx, x - R + f * 2, y - L - R, R * 2 - 2, (L + R) * 2, R - 2);
+    ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = col.body;
+    ctx.lineWidth = 2;
+    for (const k of [-0.5, 0, 0.5]) {
+      ctx.beginPath();
+      ctx.moveTo(x - R + 4 + f * 2, y + k * (L + R));
+      ctx.lineTo(x + R - 4 + f * 2, y + k * (L + R));
+      ctx.stroke();
+    }
+    // Body
+    ctx.fillStyle = col.body;
+    ctx.strokeStyle = col.dark;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(x - f * 3, y, R - 1, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    // Glove and blocker
+    ctx.fillStyle = col.dark;
+    ctx.beginPath(); ctx.arc(x + f * 3, y - L - 5, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#f2f2f2';
+    ctx.fillRect(x + f * 3 - 4, y + L + 1, 8, 8);
+    // Goalie stick paddle
+    ctx.strokeStyle = '#2b2118';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(x + f * 4, y + L + 6); ctx.lineTo(x + f * 12, y + 4); ctx.stroke();
+    // Mask
+    ctx.fillStyle = '#fafafa';
+    ctx.beginPath(); ctx.arc(x - f * 1, y, 6.5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x + f * 2, y - 4); ctx.lineTo(x + f * 2, y + 4);
+    ctx.moveTo(x + f * 4, y - 3); ctx.lineTo(x + f * 4, y + 3);
+    ctx.stroke();
   };
 
   Renderer.prototype.draw = function (world, opts) {
@@ -334,6 +426,8 @@
       ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
     }
 
+    for (const g of world.goalies || []) this.drawGoalie(ctx, g);
+
     // Skaters
     const labels = opts.labels || [];
     for (let i = 0; i < world.skaters.length; i++) {
@@ -351,17 +445,17 @@
 
     for (const net of H.NETS) this.drawNet(ctx, net, true);
 
-    // Stick target reticle for the human player
-    if (opts.reticle) {
-      const r = opts.reticle;
-      ctx.strokeStyle = 'rgba(23,58,122,0.45)';
+    // Aim cursor for the human player
+    if (opts.cursor) {
+      const r = opts.cursor;
+      ctx.strokeStyle = 'rgba(23,58,122,0.7)';
       ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(r.x, r.y, 6, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(r.x, r.y, 7, 0, Math.PI * 2); ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(r.x - 9, r.y); ctx.lineTo(r.x - 4, r.y);
-      ctx.moveTo(r.x + 4, r.y); ctx.lineTo(r.x + 9, r.y);
-      ctx.moveTo(r.x, r.y - 9); ctx.lineTo(r.x, r.y - 4);
-      ctx.moveTo(r.x, r.y + 4); ctx.lineTo(r.x, r.y + 9);
+      ctx.moveTo(r.x - 11, r.y); ctx.lineTo(r.x - 4, r.y);
+      ctx.moveTo(r.x + 4, r.y); ctx.lineTo(r.x + 11, r.y);
+      ctx.moveTo(r.x, r.y - 11); ctx.lineTo(r.x, r.y - 4);
+      ctx.moveTo(r.x, r.y + 4); ctx.lineTo(r.x, r.y + 11);
       ctx.stroke();
     }
   };
